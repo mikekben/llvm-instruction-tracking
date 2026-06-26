@@ -1,0 +1,318 @@
+diff --git a/llvm/include/llvm/IR/PassInstrumentation.h b/llvm/include/llvm/IR/PassInstrumentation.h
+index c25e2891d33d..3b59419cc2f0 100644
+--- a/llvm/include/llvm/IR/PassInstrumentation.h
++++ b/llvm/include/llvm/IR/PassInstrumentation.h
+@@ -53,10 +53,19 @@
+ #include "llvm/ADT/DenseMap.h"
+ #include "llvm/ADT/FunctionExtras.h"
+ #include "llvm/ADT/SmallVector.h"
++#include "llvm/IR/Metadata.h"
+ #include "llvm/IR/PassManager.h"
+ #include "llvm/Support/Compiler.h"
++#include <string>
+ #include <vector>
+ 
++#include "llvm/Analysis/LoopInfo.h"
++#include "llvm/IR/BasicBlock.h"
++#include "llvm/IR/Function.h"
++#include "llvm/IR/Instruction.h"
++#include "llvm/IR/Module.h"
++#include "llvm/Support/MyMetadata.h"
++
+ namespace llvm {
+ 
+ class PreservedAnalyses;
+@@ -236,6 +245,9 @@ public:
+   /// they want to skip a pass.
+   template <typename IRUnitT, typename PassT>
+   bool runBeforePass(const PassT &Pass, const IRUnitT &IR) const {
++    //errs() << "Before_Pass_" << Pass.name() << "\n";
++    tagDebugMarkers(IR);
++
+     if (!Callbacks)
+       return true;
+ 
+@@ -256,12 +268,65 @@ public:
+     return ShouldRun;
+   }
+ 
++  static void tagDebugMarker(const Instruction &I) {
++    LLVMContext& C = I.getContext();
++
++    MDNode *M = I.getMetadata("mymd");
++    if (M != nullptr) {
++      MDString* MDS =  cast<MDString>(M->getOperand(0));
++      errs() << I << ";" << MDS->getString() << "\n";
++      return;
++    }
++
++    Instruction *I1 = const_cast<Instruction*>(&I);
++
++    MDString* MDStr = MDString::get(C, std::to_string(GlobalMyInstrMetadataCounter));
++    GlobalMyInstrMetadataCounter++;
++    MDNode* N = MDNode::get(C, MDStr);
++
++    I1->setMetadata("mymd", N);
++  }
++
++  template<typename T>
++  void tagDebugMarkers(const T &) const {
++    errs() << "Overload not found\n";
++  }
++
++  void tagDebugMarkers(const Function &IR) const {
++      for (const BasicBlock &BB : IR) {
++        for (const Instruction &I : BB) {
++          tagDebugMarker(I);
++        }
++      }
++  }
++
++  void tagDebugMarkers(const Module &IR) const {
++    for (const Function &F : IR) {
++        for (const BasicBlock &BB : F) {
++          for (const Instruction &I : BB) {
++            tagDebugMarker(I);
++          }
++        }
++      }
++  }
++
++  void tagDebugMarkers(const Loop &IR) const {
++      for (const BasicBlock *BB : IR.blocks()) {
++        for (const Instruction &I : *BB) {
++          tagDebugMarker(I);
++        }
++      }
++  }
++
+   /// AfterPass instrumentation point - takes \p Pass instance that has
+   /// just been executed and constant reference to \p IR it operates on.
+   /// \p IR is guaranteed to be valid at this point.
+   template <typename IRUnitT, typename PassT>
+   void runAfterPass(const PassT &Pass, const IRUnitT &IR,
+                     const PreservedAnalyses &PA) const {
++    //errs() << "After_Pass_" << Pass.name() << "\n";
++    tagDebugMarkers(IR);
++
+     if (Callbacks)
+       for (auto &C : Callbacks->AfterPassCallbacks)
+         C(Pass.name(), llvm::Any(&IR), PA);
+diff --git a/llvm/lib/IR/AsmWriter.cpp b/llvm/lib/IR/AsmWriter.cpp
+index dd99b14d45d6..a38b3faacaf5 100644
+--- a/llvm/lib/IR/AsmWriter.cpp
++++ b/llvm/lib/IR/AsmWriter.cpp
+@@ -654,6 +654,9 @@ static void printAddressSpace(const Module *M, unsigned AS, raw_ostream &OS,
+ /// Write the specified type to the specified raw_ostream, making use of type
+ /// names or up references to shorten the type name where possible.
+ void TypePrinting::print(Type *Ty, raw_ostream &OS) {
++  if (Ty == nullptr || !isa<Type>(Ty)) {
++    OS << "{nulltype}"; return;
++  }
+   switch (Ty->getTypeID()) {
+   case Type::VoidTyID:      OS << "void"; return;
+   case Type::HalfTyID:      OS << "half"; return;
+diff --git a/llvm/lib/IR/Instruction.cpp b/llvm/lib/IR/Instruction.cpp
+index 67fad4028df5..9429177a9f91 100644
+--- a/llvm/lib/IR/Instruction.cpp
++++ b/llvm/lib/IR/Instruction.cpp
+@@ -28,8 +28,14 @@
+ #include "llvm/IR/Type.h"
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/Compiler.h"
++#include "llvm/Support/Casting.h"
++#include "llvm/Support/raw_ostream.h"
+ using namespace llvm;
+ 
++#include "llvm/Support/MyMetadata.h"
++
++long long GlobalMyInstrMetadataCounter = 0;
++
+ namespace llvm {
+ 
+ // FIXME: Flag used for an ablation performance test, Issue #147390. Placing it
+@@ -91,7 +97,34 @@ const DataLayout &Instruction::getDataLayout() const {
+   return getModule()->getDataLayout();
+ }
+ 
++void printOperationMetadataJson(const char *Operation, Instruction *I) {
++  return;/*
++  errs() << "{"
++         << "\t\"" << "opCode" << "\" : \"" << I->getOpcodeName() << "\",\n"
++         << "\t\"" << "operation" << "\" : \"" << Operation << "\",\n"
++         << "\t\"" << "function" << "\" : \"" << I->getFunction()->getName()
++         << "\",\n"
++         << "\t\"" << "basic_block" << "\" : \"" << I->getParent()->getName()
++         << "\",\n"
++         << "\t\"" << "instruction" << "\" : \"" << *I << "\""
++         << "}\n";*/
++}
++
++void printOperationMetadata(const char *Operation, Instruction *I) {
++  return;/*
++  errs() << Operation << "\n"
++         << I->getOpcodeName() << "\n"
++         << I->getFunction()->getName() << "\n"
++         << I->getParent()->getName() << "\n"
++         << *I << "\n"
++         << I << "\n"
++        //  << *(I->getFunction()) << "\n"
++         << "---\n";*/
++}
++
+ void Instruction::removeFromParent() {
++  printOperationMetadata("RemoveFromParent", this);
++
+   // Perform any debug-info maintenence required.
+   handleMarkerRemoval();
+ 
+@@ -106,11 +139,15 @@ void Instruction::handleMarkerRemoval() {
+ }
+ 
+ BasicBlock::iterator Instruction::eraseFromParent() {
++  printOperationMetadata("EraseFromParent", this);
++
+   handleMarkerRemoval();
+   return getParent()->getInstList().erase(getIterator());
+ }
+ 
+ void Instruction::insertBefore(Instruction *InsertPos) {
++  printOperationMetadata("InsertBeforePointer", this);
++
+   insertBefore(InsertPos->getIterator());
+ }
+ 
+@@ -118,17 +155,23 @@ void Instruction::insertBefore(Instruction *InsertPos) {
+ /// specified instruction.
+ void Instruction::insertBefore(BasicBlock::iterator InsertPos) {
+   insertBefore(*InsertPos->getParent(), InsertPos);
++
++  printOperationMetadata("InsertBeforeIterator", this);
+ }
+ 
+ /// Insert an unlinked instruction into a basic block immediately after the
+ /// specified instruction.
+ void Instruction::insertAfter(Instruction *InsertPos) {
++  printOperationMetadata("InsertAfterPointer", this);
++
+   BasicBlock *DestParent = InsertPos->getParent();
+ 
+   DestParent->getInstList().insertAfter(InsertPos->getIterator(), this);
+ }
+ 
+ void Instruction::insertAfter(BasicBlock::iterator InsertPos) {
++  printOperationMetadata("InsertAfterIterator", this);
++
+   BasicBlock *DestParent = InsertPos->getParent();
+ 
+   DestParent->getInstList().insertAfter(InsertPos, this);
+@@ -149,6 +192,8 @@ void Instruction::insertBefore(BasicBlock &BB,
+ 
+   BB.getInstList().insert(InsertPos, this);
+ 
++  printOperationMetadata("InsertBeforeBasicBlock", this);
++
+   // We've inserted "this": if InsertAtHead is set then it comes before any
+   // DbgVariableRecords attached to InsertPos. But if it's not set, then any
+   // DbgRecords should now come before "this".
+@@ -179,25 +224,50 @@ void Instruction::insertBefore(BasicBlock &BB,
+     getParent()->flushTerminatorDbgRecords();
+ }
+ 
++static void updateMetadata(Instruction *I) {
++    LLVMContext& C = I->getContext();
++
++    MDString* MDStr = MDString::get(C, std::to_string(GlobalMyInstrMetadataCounter));
++    GlobalMyInstrMetadataCounter++;
++    MDNode* N = MDNode::get(C, MDStr);
++
++    I->setMetadata("mymd", N);
++}
++
+ /// Unlink this instruction from its current basic block and insert it into the
+ /// basic block that MovePos lives in, right before MovePos.
+ void Instruction::moveBefore(Instruction *MovePos) {
++  printOperationMetadata("MoveBeforePointer", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(*MovePos->getParent(), MovePos->getIterator(), false);
+ }
+ 
+ void Instruction::moveBefore(BasicBlock::iterator MovePos) {
++  printOperationMetadata("MoveBeforeIterator", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(*MovePos->getParent(), MovePos, false);
+ }
+ 
+ void Instruction::moveBeforePreserving(Instruction *MovePos) {
++  printOperationMetadata("MoveBeforePreservingPointer", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(*MovePos->getParent(), MovePos->getIterator(), true);
+ }
+ 
+ void Instruction::moveBeforePreserving(BasicBlock::iterator MovePos) {
++  printOperationMetadata("MoveBeforeIteratorBasicBlock", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(*MovePos->getParent(), MovePos, true);
+ }
+ 
+ void Instruction::moveAfter(Instruction *MovePos) {
++  printOperationMetadata("MoveAfterPointer", this);
++  updateMetadata(this);
++
+   auto NextIt = std::next(MovePos->getIterator());
+   // We want this instruction to be moved to after NextIt in the instruction
+   // list, but before NextIt's debug value range.
+@@ -206,6 +276,9 @@ void Instruction::moveAfter(Instruction *MovePos) {
+ }
+ 
+ void Instruction::moveAfter(InstListType::iterator MovePos) {
++  printOperationMetadata("MoveAfterIterator", this);
++  updateMetadata(this);
++
+   // We want this instruction to be moved to after NextIt in the instruction
+   // list, but before NextIt's debug value range.
+   MovePos.setHeadBit(true);
+@@ -213,6 +286,9 @@ void Instruction::moveAfter(InstListType::iterator MovePos) {
+ }
+ 
+ void Instruction::moveAfterPreserving(Instruction *MovePos) {
++  printOperationMetadata("MoveAfterPreservingPointer", this);
++  updateMetadata(this);
++
+   auto NextIt = std::next(MovePos->getIterator());
+   // We want this instruction and its debug range to be moved to after NextIt
+   // in the instruction list, but before NextIt's debug value range.
+@@ -221,11 +297,17 @@ void Instruction::moveAfterPreserving(Instruction *MovePos) {
+ }
+ 
+ void Instruction::moveBefore(BasicBlock &BB, InstListType::iterator I) {
++  printOperationMetadata("MoveBeforeIterator", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(BB, I, false);
+ }
+ 
+ void Instruction::moveBeforePreserving(BasicBlock &BB,
+                                        InstListType::iterator I) {
++  printOperationMetadata("MoveBeforePreservingIterator", this);
++  updateMetadata(this);
++
+   moveBeforeImpl(BB, I, true);
+ }
+ 
+diff --git a/llvm/include/llvm/Support/MyMetadata.h b/llvm/include/llvm/Support/MyMetadata.h
+new file mode 100644
+index 000000000000..d3d120f157a1
+--- /dev/null
++++ b/llvm/include/llvm/Support/MyMetadata.h
+@@ -0,0 +1,6 @@
++#ifndef LLVM_SUPPORT_MYMETADATA_H
++#define LLVM_SUPPORT_MYMETADATA_H
++
++extern long long GlobalMyInstrMetadataCounter;
++
++#endif

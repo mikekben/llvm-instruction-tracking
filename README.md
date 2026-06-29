@@ -19,3 +19,9 @@ This patch applies to LLVM commit `027447c61724` (`llvmorg-23-init-6194-g027447c
    ```
    ./runner.sh
    ```
+
+## Collecting per-pass data across a function list
+
+```
+./run_functions.sh <functions.txt> <funcs-dir> /path/to/llvm-project/build/bin ./build/touched-diff <output.jsonl>
+```

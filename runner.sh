@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LLVM_BIN=/data2/ben/alive-decomp/tools/llvm-project/build/bin
+LLVM_BIN=/data2/ben/decomp-spatial-bug-fixes/tools/llvm-project/build/bin
 BUILD=$SCRIPT_DIR/build
 
 # Compile to unoptimized IR (disable optnone so opt can run passes)
